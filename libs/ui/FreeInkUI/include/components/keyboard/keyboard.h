@@ -41,6 +41,9 @@ enum class KeyboardLayoutId : uint8_t {
   // Arabic: same shape as Hebrew -- no case, one layer, no shift, RTL left to
   // the renderer. Standard 101 arrangement; alef madda long-presses off أ.
   ArabicAr,
+  // Japanese romaji: the English QWERTY grid. The app converts typed letters
+  // into kana; this id only selects that grid.
+  RomajiJa,
 };
 
 struct KeyboardKey {

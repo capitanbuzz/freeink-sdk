@@ -782,7 +782,10 @@ const KeyboardLayout& builtinKeyboardLayout(KeyboardLayoutId id, bool shifted, b
   // The symbols pages already carry digits, so numberRow only affects the
   // letter layers.
   if (symbols) {
-    const bool showLang = langKey || id >= KeyboardLayoutId::CyrillicRu;
+    // RomajiJa is appended after Arabic and still types Latin letters, so it
+    // follows langKey like English rather than the always-on non-Latin key.
+    const bool nonLatin = id >= KeyboardLayoutId::CyrillicRu && id <= KeyboardLayoutId::ArabicAr;
+    const bool showLang = langKey || nonLatin;
     if (showLang) return shifted ? SYMBOL2_LANG_LAYOUT : SYMBOL_LANG_LAYOUT;
     return shifted ? SYMBOL2_LAYOUT : SYMBOL_LAYOUT;
   }
@@ -807,11 +810,12 @@ const KeyboardLayout& builtinKeyboardLayout(KeyboardLayoutId id, bool shifted, b
   if (id == KeyboardLayoutId::HebrewIl) return numberRow ? HE_NUM_LAYOUT : HE_LAYOUT;
   // Arabic has no case either, so shift is ignored here too.
   if (id == KeyboardLayoutId::ArabicAr) return numberRow ? AR_NUM_LAYOUT : AR_LAYOUT;
-  if (id == KeyboardLayoutId::QwertyEn && langKey) {
+  if ((id == KeyboardLayoutId::QwertyEn || id == KeyboardLayoutId::RomajiJa) && langKey) {
     if (shifted) return numberRow ? EN_SHIFT_LANG_NUM_LAYOUT : EN_SHIFT_LANG_LAYOUT;
     return numberRow ? EN_LANG_NUM_LAYOUT : EN_LANG_LAYOUT;
   }
-  if (shifted && id == KeyboardLayoutId::QwertyEn) return numberRow ? EN_SHIFT_NUM_LAYOUT : EN_SHIFT_LAYOUT;
+  if (shifted && (id == KeyboardLayoutId::QwertyEn || id == KeyboardLayoutId::RomajiJa))
+    return numberRow ? EN_SHIFT_NUM_LAYOUT : EN_SHIFT_LAYOUT;
   switch (id) {
     case KeyboardLayoutId::AzertyFr:
       if (shifted && langKey) return numberRow ? FR_SHIFT_LANG_NUM_LAYOUT : FR_SHIFT_LANG_LAYOUT;
@@ -829,6 +833,7 @@ const KeyboardLayout& builtinKeyboardLayout(KeyboardLayoutId id, bool shifted, b
       if (langKey) return numberRow ? ES_LANG_NUM_LAYOUT : ES_LANG_LAYOUT;
       return numberRow ? ES_NUM_LAYOUT : ES_LAYOUT;
     case KeyboardLayoutId::QwertyEn:
+    case KeyboardLayoutId::RomajiJa:
     default:
       return numberRow ? EN_NUM_LAYOUT : EN_LAYOUT;
   }
