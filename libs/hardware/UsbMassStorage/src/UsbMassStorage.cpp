@@ -21,8 +21,27 @@ namespace {
 USBMSC gMsc;
 std::atomic<UsbMassStorage*> gOwner{nullptr};
 std::atomic<FsBlockDeviceInterface*> gDev{nullptr};
+// Updated from SOF callbacks and around MSC callbacks. millis() is only
+// read from the USB task and the app loop, both task context.
+std::atomic<uint32_t> gLastBusActivityMs{0};
+std::atomic<uint8_t> gMscCallbackDepth{0};
+std::atomic<bool> gSofSeen{false};
 constexpr uint16_t kBlockSize = 512;
+constexpr uint32_t kBusIdleMs = 400;
 uint8_t gSectorScratch[kBlockSize];
+
+void noteBusActivity() { gLastBusActivityMs.store(millis(), std::memory_order_relaxed); }
+
+struct MscCallbackScope {
+  MscCallbackScope() {
+    gMscCallbackDepth.fetch_add(1, std::memory_order_relaxed);
+    noteBusActivity();
+  }
+  ~MscCallbackScope() {
+    noteBusActivity();
+    gMscCallbackDepth.fetch_sub(1, std::memory_order_relaxed);
+  }
+};
 
 bool isRangeValid(FsBlockDeviceInterface* dev, const uint32_t lba, const uint32_t offset, const uint32_t bufsize) {
   if (!dev || bufsize == 0) return false;
@@ -33,6 +52,7 @@ bool isRangeValid(FsBlockDeviceInterface* dev, const uint32_t lba, const uint32_
 }
 
 int32_t mscRead(uint32_t lba, uint32_t offset, void* buffer, uint32_t bufsize) {
+  MscCallbackScope callbackScope;
   auto* const dev = gDev.load();
   auto* const owner = gOwner.load();
   if (!buffer || !isRangeValid(dev, lba, offset, bufsize)) {
@@ -72,6 +92,7 @@ int32_t mscRead(uint32_t lba, uint32_t offset, void* buffer, uint32_t bufsize) {
 }
 
 int32_t mscWrite(uint32_t lba, uint32_t offset, uint8_t* buffer, uint32_t bufsize) {
+  MscCallbackScope callbackScope;
   auto* const dev = gDev.load();
   auto* const owner = gOwner.load();
   if (!buffer || !isRangeValid(dev, lba, offset, bufsize)) {
@@ -123,6 +144,11 @@ bool mscStartStop(uint8_t /*power_condition*/, bool start, bool load_eject) {
 
 }  // namespace
 
+extern "C" void tud_sof_cb(uint32_t /*frame_count*/) {
+  gSofSeen.store(true, std::memory_order_relaxed);
+  noteBusActivity();
+}
+
 bool UsbMassStorage::begin(FsBlockDeviceInterface* dev) {
   if (_active || !dev || dev->sectorCount() == 0) return false;
 
@@ -130,6 +156,9 @@ bool UsbMassStorage::begin(FsBlockDeviceInterface* dev) {
   gOwner.store(this);
   _state.store(UsbMassStorageState::WaitingForHost);
   _hostSeen.store(false);
+  gSofSeen.store(false, std::memory_order_relaxed);
+  gMscCallbackDepth.store(0, std::memory_order_relaxed);
+  noteBusActivity();
   gMsc.vendorID("FreeInk");
   gMsc.productID("SD Card");
   gMsc.productRevision("1.0");
@@ -158,24 +187,30 @@ bool UsbMassStorage::begin(FsBlockDeviceInterface* dev) {
 
 void UsbMassStorage::end() {
   if (!_active) return;
-  // Signal the host to release the device BEFORE tearing down callback state.
-  // tud_disconnect() disables the D+/D- pull-up so the host ejects the media;
-  // we then wait for tud_mounted() to go false so no in-flight MSC callback
-  // can fire after gMsc.end() zeroes the callback pointers or gDev/gOwner clear.
-  // On the dual-core S3 the TinyUSB task runs on the other core — without this
-  // drain, a callback can dereference null gDev/gOwner (or the zeroed msc_luns
-  // function pointers) and hard-fault during the subsequent ESP.restart().
-  tud_disconnect();
-  for (uint32_t i = 0; i < 50; i++) {  // ~500ms timeout at 10ms ticks
-    if (!tud_mounted()) break;
-    delay(10);
+  // A pulled cable will not answer tud_disconnect(), and that call takes the
+  // TinyUSB lock the MSC task may already be stuck on. Drop our pointers and
+  // let the reboot reclaim the PHY; do not call back into TinyUSB.
+  const bool hostGoneNow = hostGone();
+  if (!hostGoneNow) {
+    // Signal the host to release the device BEFORE tearing down callback state.
+    // tud_disconnect() disables the D+/D- pull-up so the host ejects the media;
+    // we then wait for tud_mounted() to go false so no in-flight MSC callback
+    // can fire after gMsc.end() zeroes the callback pointers or gDev/gOwner clear.
+    // On the dual-core S3 the TinyUSB task runs on the other core — without this
+    // drain, a callback can dereference null gDev/gOwner (or the zeroed msc_luns
+    // function pointers) and hard-fault during the subsequent ESP.restart().
+    tud_disconnect();
+    for (uint32_t i = 0; i < 50; i++) {  // ~500ms timeout at 10ms ticks
+      if (!tud_mounted()) break;
+      delay(10);
+    }
   }
   // Mark inactive first so any callback already dispatched bails out instead
   // of dereferencing the globals that we clear below.
   _active = false;
   gOwner.store(nullptr);
   gDev.store(nullptr);
-  gMsc.end();
+  if (!hostGoneNow) gMsc.end();
   _state.store(UsbMassStorageState::Idle);
   _hostSeen.store(false);
 }
@@ -207,6 +242,13 @@ bool UsbMassStorage::hostConnected() const {
 bool UsbMassStorage::disconnectHost() const { return _active && tud_disconnect(); }
 
 bool UsbMassStorage::hostSuspended() const { return _active && tud_mounted() && tud_suspended(); }
+
+bool UsbMassStorage::hostGone() const {
+  if (!_active || !_hostSeen.load(std::memory_order_relaxed) || !gSofSeen.load(std::memory_order_relaxed)) return false;
+  if (gMscCallbackDepth.load(std::memory_order_relaxed) != 0) return false;
+  const uint32_t last = gLastBusActivityMs.load(std::memory_order_relaxed);
+  return static_cast<uint32_t>(millis() - last) >= kBusIdleMs;
+}
 
 void UsbMassStorage::markAccessed() const {
   auto current = _state.load();

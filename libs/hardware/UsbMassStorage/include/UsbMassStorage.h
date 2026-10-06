@@ -49,6 +49,13 @@ class UsbMassStorage {
   // verdict: callers must require it to persist before acting on it, and should
   // prefer a physical VBUS reading where the board has one.
   bool hostSuspended() const;
+  // True once a host has enumerated and USB frames have since stopped.
+  // Magnetic-dongle removal does not clear tud_mounted() on the ESP32-S3
+  // (VBUS is forced valid), and tud_suspended() never sticks if the PHY
+  // chatters. Missing SOFs is the signal that the cable is actually gone.
+  // False while an MSC callback is inside SD I/O, and false until the first
+  // SOF, so a port that never delivers SOF callbacks keeps the old path.
+  bool hostGone() const;
   // Soft-disconnect the USB device from the host. Call from application/task
   // context, never from an MSC callback; end() still owns final teardown.
   bool disconnectHost() const;
@@ -78,6 +85,7 @@ class UsbMassStorage {
   UsbMassStorageState state() const { return UsbMassStorageState::Idle; }
   bool hostConnected() const { return false; }
   bool hostSuspended() const { return false; }
+  bool hostGone() const { return false; }
   bool disconnectHost() const { return false; }
 };
 }  // namespace freeink
