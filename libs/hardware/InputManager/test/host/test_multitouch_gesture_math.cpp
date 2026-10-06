@@ -7,10 +7,12 @@ namespace {
 
 using freeink::input_detail::classifyPinch;
 using freeink::input_detail::classifyRotation;
+using freeink::input_detail::classifyTwoFingerTap;
 using freeink::input_detail::GesturePoint;
 using freeink::input_detail::hasRotationScale;
 using freeink::input_detail::PinchResult;
 using freeink::input_detail::RotationResult;
+using freeink::input_detail::TwoFingerTapResult;
 
 int checksRun = 0;
 int checksFailed = 0;
@@ -121,6 +123,32 @@ void testPinchAndRotationAreMutuallyExclusive() {
 // 80 px. The translation path tolerates 45 px of separation change, so it would
 // accept this as a two-finger swipe; finishMultiTouchGesture() tries pinch
 // first, which is what makes it a pinch.
+constexpr int kTapReleaseSlopPx = 59;
+
+void testTwoFingerTapStill() {
+  TwoFingerTapResult result;
+  CHECK(classifyTwoFingerTap({100, 200}, {180, 240}, {100, 200}, {180, 240}, kTapReleaseSlopPx, result));
+  CHECK(result.centerX == 140);
+  CHECK(result.centerY == 220);
+
+  CHECK(classifyTwoFingerTap({100, 200}, {180, 240}, {159, 200}, {180, 299}, kTapReleaseSlopPx, result));
+  CHECK(result.centerX == 140);
+  CHECK(result.centerY == 220);
+}
+
+void testTwoFingerTapRejectsMotionPastSlop() {
+  TwoFingerTapResult result;
+  CHECK(!classifyTwoFingerTap({100, 200}, {180, 240}, {160, 200}, {180, 240}, kTapReleaseSlopPx, result));
+}
+
+// Both contacts travel 80 px, which clears the 60 px swipe threshold.
+// finishMultiTouchGesture() tries translation before this classifier, so the
+// lift is a swipe and classifyTwoFingerTap must decline it.
+void testTwoFingerTapRejectsSwipeSizedTranslation() {
+  TwoFingerTapResult result;
+  CHECK(!classifyTwoFingerTap({0, 0}, {100, 0}, {80, 0}, {180, 0}, kTapReleaseSlopPx, result));
+}
+
 void testPinchWinsWithTranslation() {
   PinchResult result;
   CHECK(classifyPinch({0, 0}, {100, 0}, {80, 0}, {160, 0}, result));
@@ -141,6 +169,9 @@ int main() {
   testPinchInAndOut();
   testPinchRejectionThresholds();
   testPinchAndRotationAreMutuallyExclusive();
+  testTwoFingerTapStill();
+  testTwoFingerTapRejectsMotionPastSlop();
+  testTwoFingerTapRejectsSwipeSizedTranslation();
   testPinchWinsWithTranslation();
 
   std::printf("%d checks, %d failures\n", checksRun, checksFailed);

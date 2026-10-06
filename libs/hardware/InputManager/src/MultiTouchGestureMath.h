@@ -22,6 +22,11 @@ struct PinchResult {
   uint16_t centerY = 0;
 };
 
+struct TwoFingerTapResult {
+  uint16_t centerX = 0;
+  uint16_t centerY = 0;
+};
+
 inline int64_t separationSquared(const GesturePoint& first, const GesturePoint& second) {
   const int64_t dx = static_cast<int64_t>(second.x) - first.x;
   const int64_t dy = static_cast<int64_t>(second.y) - first.y;
@@ -105,6 +110,26 @@ inline bool classifyPinch(const GesturePoint& startFirst, const GesturePoint& st
       static_cast<uint16_t>((static_cast<int64_t>(startFirst.x) + startSecond.x + endFirst.x + endSecond.x) / 4);
   result.centerY =
       static_cast<uint16_t>((static_cast<int64_t>(startFirst.y) + startSecond.y + endFirst.y + endSecond.y) / 4);
+  return true;
+}
+
+// Stationary two-contact lift. `slopPx` is the same release slop as a one-finger
+// tap (motion stays a tap until it reaches the swipe threshold). The center is
+// the centroid of the two touch-down points.
+inline bool classifyTwoFingerTap(const GesturePoint& startFirst, const GesturePoint& startSecond,
+                                 const GesturePoint& endFirst, const GesturePoint& endSecond, const int slopPx,
+                                 TwoFingerTapResult& result) {
+  const auto withinSlop = [slopPx](const GesturePoint& start, const GesturePoint& end) {
+    const int dx = static_cast<int>(end.x - start.x);
+    const int dy = static_cast<int>(end.y - start.y);
+    const int adx = dx < 0 ? -dx : dx;
+    const int ady = dy < 0 ? -dy : dy;
+    return adx <= slopPx && ady <= slopPx;
+  };
+  if (!withinSlop(startFirst, endFirst) || !withinSlop(startSecond, endSecond)) return false;
+
+  result.centerX = static_cast<uint16_t>((static_cast<int64_t>(startFirst.x) + startSecond.x) / 2);
+  result.centerY = static_cast<uint16_t>((static_cast<int64_t>(startFirst.y) + startSecond.y) / 2);
   return true;
 }
 

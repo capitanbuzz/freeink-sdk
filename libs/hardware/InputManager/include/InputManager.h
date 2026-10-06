@@ -162,6 +162,11 @@ class InputManager {
   // normalized to 0..1. Rotations, tiny scale changes, and ambiguous contacts
   // are rejected, and an accepted pinch cannot also become a translation.
   bool wasMultiTouchPinch(float& scale, float& nxCenter, float& nyCenter, unsigned long& durationMs) const;
+  // One-shot two-contact tap on release. Both fingers stayed within the
+  // one-finger tap-release slop. Position is the centroid of the two
+  // touch-down points, normalized like wasTouchTap. Tried only after rotation,
+  // pinch, and multi-touch swipe have declined. Cleared each #update().
+  bool wasTouchTwoFingerTap(float& nx, float& ny, unsigned long& durationMs) const;
   // One-shot long-press: fires WHILE the finger is still down, once a
   // stationary contact (within tap slop) has been held TOUCH_LONG_PRESS_MS.
   // Position is the touch-down point, normalized like wasTouchTap. Fires at
@@ -172,8 +177,8 @@ class InputManager {
   // Ignore the remainder of the current contact: tap, swipe, release,
   // tap-candidate and held queries report nothing until the finger lifts and
   // the release edge has passed, then a fresh contact is delivered normally.
-  // Self-clears; async tap, single-swipe, multi-touch-swipe, and rotation
-  // queues are gated by the same latch.
+  // Self-clears; async tap, single-swipe, multi-touch-swipe, rotation, pinch,
+  // and two-finger-tap queues are gated by the same latch.
   void suppressTouchContact();
   // True if a screen-touch press/release or standalone capacitive home-key
   // event happened this frame. Coarse touch-input signal (the touch analogue
@@ -251,6 +256,10 @@ class InputManager {
   // normalized center, and duration contract as wasMultiTouchPinch().
   bool popMultiTouchPinch(float& scale, float& nxCenter, float& nyCenter, unsigned long& durationMs);
 
+  // Pop a queued two-contact tap. Values use the same normalized center and
+  // duration contract as wasTouchTwoFingerTap().
+  bool popTouchTwoFingerTap(float& nx, float& ny, unsigned long& durationMs);
+
   // --- Diagnostics -----------------------------------------------------------
   // A live sample of one button-group ADC pin: the raw reading plus the BTN_*
   // it currently classifies as (-1 = no band matched). On the Xteink ADC ladder
@@ -299,6 +308,12 @@ class InputManager {
     uint16_t durationMs;
   };
   QueueHandle_t _asyncMultiTouchPinchQueue = nullptr;
+  struct QueuedTwoFingerTap {
+    uint16_t centerX;
+    uint16_t centerY;
+    uint16_t durationMs;
+  };
+  QueueHandle_t _asyncTwoFingerTapQueue = nullptr;
   TaskHandle_t _asyncTask = nullptr;
   uint32_t _asyncPollMs = 15;
   static void asyncTaskTrampoline(void* self);
@@ -359,6 +374,7 @@ class InputManager {
   bool isMultiTouchTranslation(unsigned long now) const;
   bool classifyMultiTouchRotation(unsigned long now);
   bool classifyMultiTouchPinch(unsigned long now);
+  bool classifyTwoFingerTap(unsigned long now);
   void normalizeTouchPoint(uint16_t x, uint16_t y, float& nx, float& ny) const;
 
   uint8_t currentState;
@@ -420,6 +436,10 @@ class InputManager {
   uint16_t multiTouchPinchCenterX = 0;
   uint16_t multiTouchPinchCenterY = 0;
   uint16_t multiTouchPinchDurationMs = 0;
+  bool twoFingerTapEvent = false;
+  uint16_t twoFingerTapCenterX = 0;
+  uint16_t twoFingerTapCenterY = 0;
+  uint16_t twoFingerTapDurationMs = 0;
   TouchPoint touchDownPoint = {false, 0, 0, 0};  // first sample of the current contact (tap routing)
   TouchPoint touchUpPoint = {false, 0, 0, 0};    // last sample before release (swipe routing)
   unsigned long lastTouchHeldDurationMs = 0;     // contact duration, latched at release

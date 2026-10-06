@@ -230,6 +230,7 @@ void InputManager::beginAsync(const uint8_t taskPriority, const uint32_t pollMs,
   _asyncMultiTouchSwipeQueue = xQueueCreate(queueLen, sizeof(QueuedMultiTouchSwipe));
   _asyncMultiTouchRotationQueue = xQueueCreate(queueLen, sizeof(QueuedMultiTouchRotation));
   _asyncMultiTouchPinchQueue = xQueueCreate(queueLen, sizeof(QueuedMultiTouchPinch));
+  _asyncTwoFingerTapQueue = xQueueCreate(queueLen, sizeof(QueuedTwoFingerTap));
   xTaskCreate(asyncTaskTrampoline, "fi_input", 4096, this, taskPriority, &_asyncTask);
 }
 
@@ -265,6 +266,10 @@ void InputManager::asyncPoll() {
       const QueuedMultiTouchPinch pinch = {multiTouchPinchScale, multiTouchPinchCenterX, multiTouchPinchCenterY,
                                            multiTouchPinchDurationMs};
       xQueueSend(_asyncMultiTouchPinchQueue, &pinch, 0);
+    }
+    if (_asyncTwoFingerTapQueue && twoFingerTapEvent && !touchSuppressed) {
+      const QueuedTwoFingerTap tap = {twoFingerTapCenterX, twoFingerTapCenterY, twoFingerTapDurationMs};
+      xQueueSend(_asyncTwoFingerTapQueue, &tap, 0);
     }
     vTaskDelay(pdMS_TO_TICKS(_asyncPollMs));
   }
@@ -324,6 +329,15 @@ bool InputManager::popMultiTouchPinch(float& scale, float& nxCenter, float& nyCe
   scale = pinch.scale;
   normalizeTouchPoint(pinch.centerX, pinch.centerY, nxCenter, nyCenter);
   durationMs = pinch.durationMs;
+  return true;
+}
+
+bool InputManager::popTouchTwoFingerTap(float& nx, float& ny, unsigned long& durationMs) {
+  if (!_asyncTwoFingerTapQueue) return false;
+  QueuedTwoFingerTap tap{};
+  if (xQueueReceive(_asyncTwoFingerTapQueue, &tap, 0) != pdTRUE) return false;
+  normalizeTouchPoint(tap.centerX, tap.centerY, nx, ny);
+  durationMs = tap.durationMs;
   return true;
 }
 
@@ -524,6 +538,7 @@ void InputManager::update() {
   multiTouchSwipeEvent = false;
   multiTouchRotationEvent = false;
   multiTouchPinchEvent = false;
+  twoFingerTapEvent = false;
   touchHomeKeyEvent = false;
   touchHomeKeyTapEvent = false;
   touchHomeKeyLongEvent = false;
@@ -819,6 +834,20 @@ bool InputManager::wasMultiTouchPinch(float& scale, float& nxCenter, float& nyCe
 #endif
 }
 
+bool InputManager::wasTouchTwoFingerTap(float& nx, float& ny, unsigned long& durationMs) const {
+#if FREEINK_CAP_TOUCH
+  if (!twoFingerTapEvent || touchSuppressed) return false;
+  normalizeTouchPoint(twoFingerTapCenterX, twoFingerTapCenterY, nx, ny);
+  durationMs = twoFingerTapDurationMs;
+  return true;
+#else
+  (void)nx;
+  (void)ny;
+  (void)durationMs;
+  return false;
+#endif
+}
+
 bool InputManager::wasTouchLongPress(float& nx, float& ny) const {
 #if FREEINK_CAP_TOUCH
   if (!touchLongPressEvent || touchMultiContactSequence) return false;
@@ -841,6 +870,7 @@ void InputManager::suppressTouchContact() {
   if (_asyncMultiTouchSwipeQueue) xQueueReset(_asyncMultiTouchSwipeQueue);
   if (_asyncMultiTouchRotationQueue) xQueueReset(_asyncMultiTouchRotationQueue);
   if (_asyncMultiTouchPinchQueue) xQueueReset(_asyncMultiTouchPinchQueue);
+  if (_asyncTwoFingerTapQueue) xQueueReset(_asyncTwoFingerTapQueue);
 #endif
 }
 
@@ -899,6 +929,7 @@ void InputManager::cancelMultiTouchGesture() {
   multiTouchSwipeEvent = false;
   multiTouchRotationEvent = false;
   multiTouchPinchEvent = false;
+  twoFingerTapEvent = false;
   multiTouchGestureState =
       (touchPressed || touchReleasedEvent) ? MultiTouchGestureState::Blocked : MultiTouchGestureState::Idle;
 }
@@ -1126,6 +1157,29 @@ bool InputManager::classifyMultiTouchPinch(const unsigned long now) {
   return true;
 }
 
+bool InputManager::classifyTwoFingerTap(const unsigned long now) {
+  if (trackedTouchContactCount != 2 || now - multiTouchContacts[0].start.timestamp > TOUCH_MULTI_SWIPE_MAX_MS) {
+    return false;
+  }
+
+  const auto toGesturePoint = [](const TouchPoint& point) {
+    return freeink::input_detail::GesturePoint{point.x, point.y};
+  };
+  freeink::input_detail::TwoFingerTapResult result;
+  if (!freeink::input_detail::classifyTwoFingerTap(
+          toGesturePoint(multiTouchContacts[0].start), toGesturePoint(multiTouchContacts[1].start),
+          toGesturePoint(multiTouchContacts[0].last), toGesturePoint(multiTouchContacts[1].last),
+          TOUCH_TAP_RELEASE_SLOP_PX, result)) {
+    return false;
+  }
+
+  twoFingerTapCenterX = result.centerX;
+  twoFingerTapCenterY = result.centerY;
+  twoFingerTapDurationMs = static_cast<uint16_t>(now - multiTouchContacts[0].start.timestamp);
+  twoFingerTapEvent = true;
+  return true;
+}
+
 void InputManager::finishMultiTouchGesture(const unsigned long now) {
   if (classifyMultiTouchRotation(now)) {
     multiTouchGestureState = MultiTouchGestureState::Blocked;
@@ -1153,6 +1207,8 @@ void InputManager::finishMultiTouchGesture(const unsigned long now) {
     multiTouchSwipeEndY = static_cast<uint16_t>(endY / trackedTouchContactCount);
     multiTouchSwipeDurationMs = static_cast<uint16_t>(now - multiTouchContacts[0].start.timestamp);
     multiTouchSwipeEvent = true;
+  } else {
+    classifyTwoFingerTap(now);
   }
   multiTouchGestureState = MultiTouchGestureState::Blocked;
 }
