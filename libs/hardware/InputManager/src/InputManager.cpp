@@ -781,6 +781,24 @@ bool InputManager::wasSwipe(float& nxStart, float& nyStart, float& nxEnd, float&
 #endif
 }
 
+bool InputManager::wasTouchStroke(float& nxStart, float& nyStart, float& nxEnd, float& nyEnd) const {
+#if FREEINK_CAP_TOUCH
+  if (!touchReleasedEvent || touchSuppressed || touchMultiContactSequence) return false;
+  const int dx = static_cast<int>(touchUpPoint.x) - static_cast<int>(touchDownPoint.x);
+  const int dy = static_cast<int>(touchUpPoint.y) - static_cast<int>(touchDownPoint.y);
+  if (absInt(dx) < TOUCH_STROKE_MIN_PX && absInt(dy) < TOUCH_STROKE_MIN_PX) return false;
+  normalizeTouchPoint(touchDownPoint.x, touchDownPoint.y, nxStart, nyStart);
+  normalizeTouchPoint(touchUpPoint.x, touchUpPoint.y, nxEnd, nyEnd);
+  return true;
+#else
+  (void)nxStart;
+  (void)nyStart;
+  (void)nxEnd;
+  (void)nyEnd;
+  return false;
+#endif
+}
+
 bool InputManager::wasMultiTouchSwipe(uint8_t& contactCount, float& nxStart, float& nyStart, float& nxEnd, float& nyEnd,
                                       unsigned long& durationMs) const {
 #if FREEINK_CAP_TOUCH

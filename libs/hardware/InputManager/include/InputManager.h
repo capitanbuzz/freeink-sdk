@@ -142,6 +142,9 @@ class InputManager {
   // Swipe gesture on release. Returns start/end positions normalized in the
   // panel's native frame; callers map orientation and check this before tap.
   bool wasSwipe(float& nxStart, float& nyStart, float& nxEnd, float& nyEnd) const;
+  // Finger travel on release, including a slow drag. Same endpoints as wasSwipe,
+  // without the flick time limit, and with a shorter minimum distance.
+  bool wasTouchStroke(float& nxStart, float& nyStart, float& nxEnd, float& nyEnd) const;
   // One-shot 2-4 contact translation gesture. The SDK reports the number of
   // contacts plus their centroid start/end normalized in its panel-native
   // frame; applications opt into the exact counts they support, map display
@@ -469,6 +472,7 @@ class InputManager {
   static constexpr unsigned long TOUCH_SAMPLE_DELAY_MS = 8;  // I2C poll cadence
   static constexpr int TOUCH_TAP_SLOP_PX = 28;
   static constexpr int TOUCH_SWIPE_MIN_PX = 60;
+  static constexpr int TOUCH_STROKE_MIN_PX = 24;
   static constexpr int TOUCH_TAP_RELEASE_SLOP_PX = TOUCH_SWIPE_MIN_PX - 1;
   static constexpr unsigned long TOUCH_SWIPE_MAX_MS = 700;
   static constexpr unsigned long TOUCH_MULTI_SWIPE_MAX_MS = 2000;
