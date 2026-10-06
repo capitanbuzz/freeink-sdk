@@ -311,6 +311,8 @@ The **GT911 touch** is on the same bus at **0x5D** (INT=GPIO4, RST=GPIO10; see
   **not conclusively identified** (stock's battery icon uses the GPIO21 charge
   state, not a USB-presence signal).
 
+USB Drive on this board exposes the SD card as a mass-storage device. The ESP32-S3 OTG core has no VBUS pin in this design, so `tud_mounted()` stays true after the magnetic dongle comes off. The firmware treats a stopped SOF stream, or GPIO21 going inactive after it was active on the “connect this reader” page, as the dongle leaving. It then reboots to Home without waiting for a host bus reset. Details for readers are in the Atelier doc `docs/usb-drive.md`.
+
 ## Frontlight — dual warm/cold PWM
 
 **Confirmed on hardware** — dual-channel color temperature, and the identities
